@@ -35,4 +35,42 @@ typedef struct RsaInfo {
   // pointer to signature
   uint8_t *sig;
 } RsaInfo;
+
+/**
+ * This structure contains the following information:
+ * 1) RSA Key Size
+ * 2) RSA modulus N
+ * 3) A random integer g
+ * 4) Proof Data: integers a and d
+ */
+typedef struct NonmembershipInfo {
+  // RSA Key Size, in bits. For example, 1024, 2048.
+  // Normally we use 1024; Choose 2048 for safety.
+  uint32_t key_size;
+
+  // The message size that this accumulator deals with
+  // Much smaller than key_size. Take l = 256 should be sufficient
+  uint32_t l;
+
+  // RSA modulus N. Note that in RSA accumulator the exponent E is not needed
+  // N is a very large number and should be stored in a byte array of size key_size/8
+  uint8_t *N;
+
+  // g is a random value in QR[n] which is the group of quadratic residues modulo n
+  // i.e. g = x^2 mod n for some 0 <= x < n
+  // g generates a group G_n = {g^k mod n | for 0 <= k < order(g)}
+  // g should be of size key_size/8, i.e. same as n
+  uint8_t *g;
+
+  // The nonmembership proof contains two integers: a and d
+  // where a is an integer less than 2^l
+  // and d is in the group G_n
+  // a is stored in array of size l/8
+  // d is stored in array of size key_size/8
+  uint8_t *a;
+  uint8_t *d;
+
+  // The accumulator is an integer 0 <= c < n of size key_size/8
+  uint8_t *c;
+}
 #endif  // CKB_MISCELLANEOUS_SCRIPTS_RSA_SIGHASH_ALL_H
