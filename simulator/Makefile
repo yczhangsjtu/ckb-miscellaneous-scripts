@@ -80,7 +80,7 @@ OBJS_CRYPTO= \
 
 .PHONY: all clean
 
-all: $(OBJDIR)/libmbedcrypto.a $(OBJDIR)/rsa_sighash_all_usesim
+all: $(OBJDIR)/libmbedcrypto.a $(OBJDIR)/rsa_sighash_all_usesim $(OBJDIR)/rsa_accumulator_usesim
 	
 
 # crypto
@@ -90,6 +90,9 @@ $(OBJDIR)/libmbedcrypto.a: $(OBJS_CRYPTO)
 
 $(OBJDIR)/rsa_sighash_all_usesim: ../deps/ckb-c-stdlib/libc/src/impl.c ../c/rsa_sighash_all.c rsa_sighash_all_usesim.c $(OBJDIR)/libmbedcrypto.a
 	$(CC) $(LOCAL_CFLAGS) $(CFLAGS) $(LOCAL_LDFLAGS) $(LDFLAGS) rsa_sighash_all_usesim.c $(OBJDIR)/libmbedcrypto.a -o $@
+
+$(OBJDIR)/rsa_accumulator_usesim: ../deps/ckb-c-stdlib/libc/src/impl.c ../c/rsa_sighash_all.c rsa_accumulator_usesim.c $(OBJDIR)/libmbedcrypto.a
+	$(CC) $(LOCAL_CFLAGS) $(CFLAGS) $(LOCAL_LDFLAGS) $(LDFLAGS) rsa_accumulator_usesim.c $(OBJDIR)/libmbedcrypto.a -o $@
 
 run: $(OBJDIR)/rsa_sighash_all_usesim
 	$(OBJDIR)/rsa_sighash_all_usesim
