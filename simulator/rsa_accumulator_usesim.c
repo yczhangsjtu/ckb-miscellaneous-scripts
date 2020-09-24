@@ -19,6 +19,14 @@ static int scan_hex(const char *s, unsigned char *value) {
   return 1;
 }
 
+static int bytes_from_hex(const char *s, unsigned char *value, int n) {
+  for(int i = 0; i < n; i++) {
+    if(scan_hex(s + 2 * i, value + i) == 0)
+      return 0;
+  }
+  return 1;
+}
+
 void mbedtls_mpi_dump(const char *prefix, const mbedtls_mpi *X) {
   size_t n;
   char s[1024];
@@ -42,108 +50,64 @@ int main(int argc, const char *argv[]) {
   (void)argv;
   int exit_code = ERROR_RSA_ONLY_INIT;
   mbedtls_printf("Entering main()\n");
-  const char *sig =
-      "5AC84DEA32E756A5A1C287C5F4F1446F0606ACF8202D419570B2082EB8C439FB2157DF48"
-      "2546487B89FD6A8E00452431E57AD264C9D0B7F71182D250219CFCBA74D61AC01ACE4820"
-      "6DA7D124BE2E1DA77A9E1F4CF34F64CC4085DA79AE406A96C4F15467086839A79EAB691C"
-      "73D1EE248819479574028389376BD7F9FB4F5C9B";
-  const char *msg = "hello,CKB!";
-  unsigned char sig_buf[MBEDTLS_MPI_MAX_SIZE];
+
+  // TODO: use real data instead of fake ones
   const char *N =
       "A1D46FBA2318F8DCEF16C280948B1CF27966B9B47225ED2989F8D74B45BD36049C0AAB5A"
       "D0FF003553BA843C8E12782FC5873BB89A3DC84B883D25666CD22BF3ACD5B675969F8BEB"
       "FBCAC93FDD927C7442B178B10D1DFF9398E52316AAE0AF74E594650BDC3C670241D41868"
-      "4593CDA1A7B9DC4F20D2FDC6F66344074003E211";
-  // convert signature in plain string to binary
-  size_t i = 0;
-  size_t sig_len = strlen(sig);
-  const char *sig_ptr = sig;
-  const char *sig_end = sig + sig_len;
+      "4593CDA1A7B9DC4F20D2FDC6F66344074003E211"; // 1024 bits
+  const char *g =
+      "5AC84DEA32E756A5A1C287C5F4F1446F0606ACF8202D419570B2082EB8C439FB2157DF48"
+      "2546487B89FD6A8E00452431E57AD264C9D0B7F71182D250219CFCBA74D61AC01ACE4820"
+      "6DA7D124BE2E1DA77A9E1F4CF34F64CC4085DA79AE406A96C4F15467086839A79EAB691C"
+      "73D1EE248819479574028389376BD7F9FB4F5C9B"; // 1024 bits
+  const char *a =
+      "5AC84DEA32E756A5A1C287C5F4F1446F0606ACF8202D419570B2082EB8C439FB"; // 256 bits
+  const char *d =
+      "5AC84DEA32E756A5A1C287C5F4F1446F0606ACF8202D419570B2082EB8C439FB2157DF48"
+      "2546487B89FD6A8E00452431E57AD264C9D0B7F71182D250219CFCBA74D61AC01ACE4820"
+      "6DA7D124BE2E1DA77A9E1F4CF34F64CC4085DA79AE406A96C4F15467086839A79EAB691C"
+      "73D1EE248819479574028389376BD7F9FB4F5C9B"; // 1024 bits
+  const char *c =
+      "5AC84DEA32E756A5A1C287C5F4F1446F0606ACF8202D419570B2082EB8C439FB2157DF48"
+      "2546487B89FD6A8E00452431E57AD264C9D0B7F71182D250219CFCBA74D61AC01ACE4820"
+      "6DA7D124BE2E1DA77A9E1F4CF34F64CC4085DA79AE406A96C4F15467086839A79EAB691C"
+      "73D1EE248819479574028389376BD7F9FB4F5C9B"; // 1024 bits
 
-  while (1) {
-    unsigned char c = 0;
-    int consumed = scan_hex(sig_ptr, &c);
-    if (consumed == 0) break;
-    if (i >= (int)sizeof(sig_buf)) break;
-    sig_buf[i++] = (unsigned char)c;
-    sig_ptr += consumed * 2;
-    if (sig_ptr >= sig_end) break;
-  }
+  const char *msg = "hello,CKB!";
 
-  int limbs_count = strlen(N) * 4 / 8;
-  mbedtls_mpi_uint n_buff[limbs_count];
-  mbedtls_mpi NN;
-  mbedtls_mpi_init(&NN);
-  // allocate memory manually, avoid using calloc
-  NN.p = n_buff;
-  NN.n = limbs_count;
-  mbedtls_mpi_read_string(&NN, 16, N);
+  unsigned char N_buf[1024/8];
+  unsigned char g_buf[1024/8];
+  unsigned char a_buf[256/8];
+  unsigned char d_buf[1024/8];
+  unsigned char c_buf[1024/8];
 
-  RsaInfo info;
+  bytes_from_hex(N, N_buf, 1024/8);
+  bytes_from_hex(g, g_buf, 1024/8);
+  bytes_from_hex(a, a_buf, 256/8);
+  bytes_from_hex(d, d_buf, 1024/8);
+  bytes_from_hex(c, c_buf, 1024/8);
+
+  NonmembershipInfo info;
   info.key_size = 1024;
-  info.sig = sig_buf;
-  info.E = 65537;  // hex format: "010001"
-  info.sig_length = sig_len / 2;
+  info.l = 256;
+  info.N = N_buf;
+  info.g = g_buf;
+  info.a = a_buf;
+  info.d = d_buf;
+  info.c = c_buf;
 
-  uint8_t N_buff[info.key_size / 8];
-  info.N = N_buff;
-  mbedtls_mpi_write_binary_le(&NN, info.N, info.key_size / 8);
-
-  uint8_t output;
-  size_t output_len;
-  int result = validate_signature(NULL, (const uint8_t *)&info, sizeof(info),
-                                  (const uint8_t *)msg, strlen(msg), &output,
-                                  &output_len);
+  int result = verify_nonmembership(NULL, (const uint8_t *)&info, sizeof(info),
+                                  (const uint8_t *)msg, strlen(msg), NULL, NULL);
   if (result == 0) {
-    mbedtls_printf("validate signature passed\n");
+    mbedtls_printf("verify nonmembership passed\n");
   } else {
-    mbedtls_printf("validate signature failed: %d\n", result);
-    exit_code = ERROR_RSA_VERIFY_FAILED;
+    mbedtls_printf("verify nonmembership failed: %d\n", result);
+    exit_code = ERROR_NONMEMBERSHIP_VERIFY_FAILED;
     goto exit;
   }
 
-  msg = "hello, world!";
-  int result2 = validate_signature(NULL, (const uint8_t *)&info, sizeof(info),
-                                   (const uint8_t *)msg, strlen(msg), &output,
-                                   &output_len);
-  if (result2 == ERROR_RSA_VERIFY_FAILED) {
-    mbedtls_printf("validate signature passed\n");
-  } else {
-    mbedtls_printf("(failed case) validate signature failed:%d\n", result);
-    exit_code = ERROR_RSA_VERIFY_FAILED;
-    goto exit;
-  }
-
-  info.key_size = 2048;
-  unsigned char N2048[2048 / 8];
-  dup_buffer(N_buff, 1024 / 8, N2048, 2);
-  info.N = N2048;
-  int result3 = validate_signature(NULL, (const uint8_t *)&info, sizeof(info),
-                                   (const uint8_t *)msg, strlen(msg), &output,
-                                   &output_len);
-  if (result3 == ERROR_RSA_VERIFY_FAILED) {
-    mbedtls_printf("validate signature (2048-bit) passed\n");
-  } else {
-    mbedtls_printf("validate signature (2048-bit) failed: %d\n", result);
-    exit_code = ERROR_RSA_VERIFY_FAILED;
-    goto exit;
-  }
-
-  info.key_size = 4096;
-  unsigned char N4096[4096 / 8];
-  dup_buffer(N_buff, 1024 / 8, N4096, 4);
-  info.N = N4096;
-  int result4 = validate_signature(NULL, (const uint8_t *)&info, sizeof(info),
-                                   (const uint8_t *)msg, strlen(msg), &output,
-                                   &output_len);
-  if (result4 == ERROR_RSA_VERIFY_FAILED) {
-    mbedtls_printf("validate signature (4096-bit) passed\n");
-  } else {
-    mbedtls_printf("validate signature (4096-bit) failed: %d\n", result);
-    exit_code = ERROR_RSA_VERIFY_FAILED;
-    goto exit;
-  }
-  exit_code = CKB_SUCCESS;
 exit:
   if (exit_code != CKB_SUCCESS) {
     mbedtls_printf("Failed, check log!");

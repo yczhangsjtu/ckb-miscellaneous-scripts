@@ -7,6 +7,7 @@
 #include "mbedtls/md.h"
 #include "mbedtls/memory_buffer_alloc.h"
 #include "mbedtls/rsa.h"
+#include "mbedtls/entropy.h"
 #include "mbedtls/ctr_drbg.h"
 
 #define CKB_SUCCESS 0
@@ -183,8 +184,7 @@ __attribute__((visibility("default"))) int verify_nonmembership(
   int ret;
   int exit_code = ERROR_RSA_ONLY_INIT;
   // mbedtls_rsa_context rsa;
-  mbedtls_mpi N,g,a,d,c;
-  unsigned char hash[32];
+  mbedtls_mpi N,g,a,d,c,x;
   NonmembershipInfo *input_info = (NonmembershipInfo *)proof_buffer;
 
   // Allocate memory in this buffer instead of from the heap
@@ -200,6 +200,7 @@ __attribute__((visibility("default"))) int verify_nonmembership(
   mbedtls_mpi_init(&a);
   mbedtls_mpi_init(&d);
   mbedtls_mpi_init(&c);
+  mbedtls_mpi_init(&x);
   CHECK_PARAM(input_info->key_size == RSA_VALID_KEY_SIZE1 ||
                   input_info->key_size == RSA_VALID_KEY_SIZE2 ||
                   input_info->key_size == RSA_VALID_KEY_SIZE3,
@@ -210,20 +211,19 @@ __attribute__((visibility("default"))) int verify_nonmembership(
   CHECK_PARAM(proof_size == sizeof(NonmembershipInfo), ERROR_NONMEMBERSHIP_INVALID_PARAM2);
 
   // Load all the integers from input
-  mbedtls_mpi_read_binary_le(&rsa.N, (const unsigned char *)input_info->N,
+  mbedtls_mpi_read_binary_le(&N, (const unsigned char *)input_info->N,
                              input_info->key_size / 8);
-  mbedtls_mpi_read_binary_le(&rsa.g, (const unsigned char *)input_info->g,
+  mbedtls_mpi_read_binary_le(&g, (const unsigned char *)input_info->g,
                              input_info->key_size / 8);
-  mbedtls_mpi_read_binary_le(&rsa.a, (const unsigned char *)input_info->a,
+  mbedtls_mpi_read_binary_le(&a, (const unsigned char *)input_info->a,
                              input_info->l / 8);
-  mbedtls_mpi_read_binary_le(&rsa.d, (const unsigned char *)input_info->d,
+  mbedtls_mpi_read_binary_le(&d, (const unsigned char *)input_info->d,
                              input_info->key_size / 8);
-  mbedtls_mpi_read_binary_le(&rsa.c, (const unsigned char *)input_info->d,
+  mbedtls_mpi_read_binary_le(&c, (const unsigned char *)input_info->d,
                              input_info->key_size / 8);
-  // rsa.len = (mbedtls_mpi_bitlen(&rsa.N) + 7) >> 3;
 
   ret = hash_to_prime(mbedtls_md_info_from_type(MBEDTLS_MD_SHA256), message_buffer,
-                  message_size, hash);
+                  message_size, &x);
   if (ret != 0) {
     mbedtls_printf("\nhash_to_prime failed: %d\n", ret);
     exit_code = ERROR_NONMEMBERSHIP_HASH_TO_PRIME_FAILED;
@@ -231,32 +231,32 @@ __attribute__((visibility("default"))) int verify_nonmembership(
   }
 
   // check c^a = d^x g mod n, where x = hash(m)
-  ret = mbedtls_mpi_power(c,c,a,n);
+  ret = mbedtls_mpi_exp_mod(&c,&c,&a,&N,NULL);
   if(ret != 0) {
     exit_code = ERROR_NONMEMBERSHIP_POWER_MOD_FAILED;
     goto exit;
   }
 
-  ret = mbedtls_mpi_power(d,d,x,n);
+  ret = mbedtls_mpi_exp_mod(&d,&d,&x,&N,NULL);
   if(ret != 0) {
     exit_code = ERROR_NONMEMBERSHIP_POWER_MOD_FAILED;
     goto exit;
   }
 
-  ret = mbedtls_mpi_mul_mpi(d,d,g);
+  ret = mbedtls_mpi_mul_mpi(&d,&d,&g);
   if(ret != 0) {
     exit_code = ERROR_NONMEMBERSHIP_MUL_FAILED;
     goto exit;
   }
 
-  ret = mbedtls_mpi_mod_mpi(d,d,n);
+  ret = mbedtls_mpi_mod_mpi(&d,&d,&N);
   if(ret != 0) {
     exit_code = ERROR_NONMEMBERSHIP_MUL_FAILED;
     goto exit;
   }
 
   // Compare, if not zero, then the integers are not equal
-  if(mbedtls_mpi_cmp_mpi(c,d) != 0) {
+  if(mbedtls_mpi_cmp_mpi(&c,&d) != 0) {
     mbedtls_printf("\nthe accumulator nonmembership verification fails\n");
     exit_code = ERROR_NONMEMBERSHIP_VERIFY_FAILED;
     goto exit;
@@ -271,6 +271,7 @@ exit:
   mbedtls_mpi_free(&a);
   mbedtls_mpi_free(&d);
   mbedtls_mpi_free(&c);
+  mbedtls_mpi_free(&x);
   return exit_code;
 }
 
@@ -299,21 +300,28 @@ cleanup:
 int hash_to_prime(const mbedtls_md_info_t *md_info, const unsigned char *buf,
                   size_t n, mbedtls_mpi *output) {
   int ret = -1;
-  int size = md_info->size;
-  mbedtls_mpi p;
+  int size = mbedtls_md_get_size(md_info);
   mbedtls_ctr_drbg_context ctr_drbg;
   mbedtls_entropy_context entropy;
+  const char *pers = "hash_to_prime";
 
   // The hash function we use should not be larger than the message size
-  if(size <= NONMEMBERSHIP_VALID_MESSAGE_SIZE) {
+  if(size > NONMEMBERSHIP_VALID_MESSAGE_SIZE/8) {
+    mbedtls_printf("\nmd_info size is not valid message size: %d (%d)\n", size, NONMEMBERSHIP_VALID_MESSAGE_SIZE/8);
     goto cleanup;
   }
 
-  unsigned char hash_value[NONMEMBERSHIP_VALID_MESSAGE_SIZE];
-  if((ret = md_string(md_info, buf, n, hash_value)) != 0) goto cleanup;
+  unsigned char hash_value[NONMEMBERSHIP_VALID_MESSAGE_SIZE/8];
+  if((ret = md_string(md_info, buf, n, hash_value)) != 0) {
+    mbedtls_printf("\nmd_string in hash_to_prime failed: %d\n", ret);
+    goto cleanup;
+  }
 
   // Directly use the output as the buffer for the prime
-  if((ret = mbedtls_mpi_read_binary_le(output, hash_value, size)) != 0) goto cleanup;
+  if((ret = mbedtls_mpi_read_binary_le(output, hash_value, size)) != 0) {
+    mbedtls_printf("\nmbedtls_mpi_read_binary_le in hash_to_prime failed: %d\n", ret);
+    goto cleanup;
+  }
 
   // The primality test requires some random number generator
   mbedtls_ctr_drbg_init( &ctr_drbg );
@@ -321,8 +329,10 @@ int hash_to_prime(const mbedtls_md_info_t *md_info, const unsigned char *buf,
 
   if( ( ret = mbedtls_ctr_drbg_seed( &ctr_drbg, mbedtls_entropy_func, &entropy,
                                (const unsigned char *) pers,
-                               strlen( pers ) ) ) != 0 )
+                               strlen( pers ) ) ) != 0 ) {
+    mbedtls_printf("\nmbedtls_ctr_drbg_seed in hash_to_prime failed: %d\n", ret);
     goto cleanup;
+  }
 
   // This function returns 0 when the given integer IS PRIME
   // Returns MBEDTLS_ERR_MPI_NOT_ACCEPTABLE if the integer is not prime
@@ -333,7 +343,15 @@ int hash_to_prime(const mbedtls_md_info_t *md_info, const unsigned char *buf,
   // TODO: investigate how to implement next_prime() more efficiently (refer to the gmp implementation)
   while((ret = mbedtls_mpi_is_prime_ext(output, 50, mbedtls_ctr_drbg_random, &ctr_drbg)) ==
     MBEDTLS_ERR_MPI_NOT_ACCEPTABLE) {
-    if((ret = mbedtls_mpi_add_int(output, output, 1)) != 0) goto cleanup;
+    if((ret = mbedtls_mpi_add_int(output, output, 1)) != 0) {
+      mbedtls_printf("\nmbedtls_mpi_add_int in hash_to_prime failed: %d\n", ret);
+      goto cleanup;
+    }
+  }
+
+  // Since the while loop is broken out, now ret should be 0 or some other error
+  if(ret != 0) {
+    mbedtls_printf("\nmbedtls_mpi_is_prime_ext in hash_to_prime failed: %d\n", ret);
   }
 
 cleanup:

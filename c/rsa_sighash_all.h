@@ -72,5 +72,5 @@ typedef struct NonmembershipInfo {
 
   // The accumulator is an integer 0 <= c < n of size key_size/8
   uint8_t *c;
-}
+} NonmembershipInfo;
 #endif  // CKB_MISCELLANEOUS_SCRIPTS_RSA_SIGHASH_ALL_H
